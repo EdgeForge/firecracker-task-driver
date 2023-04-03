@@ -1,10 +1,13 @@
 package structs
 
 import (
+	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
-	"github.com/hashicorp/nomad/helper"
+	"github.com/hashicorp/hcl/v2/hclsyntax"
+	"golang.org/x/exp/maps"
 )
 
 // CSITopology is a map of topological domains to topological segments.
@@ -50,7 +53,7 @@ func (t *CSITopology) Copy() *CSITopology {
 	}
 
 	return &CSITopology{
-		Segments: helper.CopyMapStringString(t.Segments),
+		Segments: maps.Clone(t.Segments),
 	}
 }
 
@@ -58,8 +61,7 @@ func (t *CSITopology) Equal(o *CSITopology) bool {
 	if t == nil || o == nil {
 		return t == o
 	}
-
-	return helper.CompareMapStringString(t.Segments, o.Segments)
+	return maps.Equal(t.Segments, o.Segments)
 }
 
 func (t *CSITopology) MatchFound(o []*CSITopology) bool {
@@ -315,7 +317,7 @@ func (di *DriverInfo) Copy() *DriverInfo {
 
 	cdi := new(DriverInfo)
 	*cdi = *di
-	cdi.Attributes = helper.CopyMapStringString(di.Attributes)
+	cdi.Attributes = maps.Clone(di.Attributes)
 	return cdi
 }
 
@@ -351,4 +353,51 @@ func (di *DriverInfo) HealthCheckEquals(other *DriverInfo) bool {
 	}
 
 	return true
+}
+
+// NodeMetaApplyRequest is used to update Node metadata on Client agents.
+type NodeMetaApplyRequest struct {
+	QueryOptions // Client RPCs must use QueryOptions to set AllowStale=true
+
+	// NodeID is the node being targeted by this request (or the node
+	// receiving this request if NodeID is empty).
+	NodeID string
+
+	// Meta is the new Node metadata being applied and differs slightly
+	// from Node.Meta as nil values are used to unset Node.Meta keys.
+	Meta map[string]*string
+}
+
+func (n *NodeMetaApplyRequest) Validate() error {
+	if len(n.Meta) == 0 {
+		return fmt.Errorf("missing required Meta object")
+	}
+	for k := range n.Meta {
+		if k == "" {
+			return fmt.Errorf("metadata keys must not be empty")
+		}
+
+		// Validate keys are dotted identifiers since their primary use case is in
+		// constraints as interpolated hcl variables.
+		// https://github.com/hashicorp/hcl/blob/v2.16.0/hclsyntax/spec.md#identifiers
+		for _, part := range strings.Split(k, ".") {
+			if !hclsyntax.ValidIdentifier(part) {
+				return fmt.Errorf("%q is invalid; metadata keys must be valid dotted hcl identifiers", k)
+			}
+		}
+	}
+
+	return nil
+}
+
+// NodeMetaResponse is used to read Node metadata directly from Client agents.
+type NodeMetaResponse struct {
+	// Meta is the merged static + dynamic Node metadata
+	Meta map[string]string
+
+	// Dynamic is the dynamic Node metadata (set via API)
+	Dynamic map[string]*string
+
+	// Static is the static Node metadata (set via agent configuration)
+	Static map[string]string
 }

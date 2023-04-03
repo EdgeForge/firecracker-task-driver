@@ -12,7 +12,6 @@ import (
 
 	"github.com/hashicorp/nomad/client/allocdir"
 	cstructs "github.com/hashicorp/nomad/client/structs"
-	"github.com/hashicorp/nomad/helper"
 	"github.com/hashicorp/nomad/nomad/structs"
 	"github.com/hashicorp/nomad/plugins/base"
 	"github.com/hashicorp/nomad/plugins/drivers/proto"
@@ -20,6 +19,7 @@ import (
 	pstructs "github.com/hashicorp/nomad/plugins/shared/structs"
 	"github.com/zclconf/go-cty/cty"
 	"github.com/zclconf/go-cty/cty/msgpack"
+	"golang.org/x/exp/maps"
 )
 
 const (
@@ -292,8 +292,8 @@ func (tc *TaskConfig) Copy() *TaskConfig {
 	}
 	c := new(TaskConfig)
 	*c = *tc
-	c.Env = helper.CopyMapStringString(c.Env)
-	c.DeviceEnv = helper.CopyMapStringString(c.DeviceEnv)
+	c.Env = maps.Clone(c.Env)
+	c.DeviceEnv = maps.Clone(c.DeviceEnv)
 	c.Resources = tc.Resources.Copy()
 	c.DNS = tc.DNS.Copy()
 
@@ -405,7 +405,7 @@ type LinuxResources struct {
 	// and thus the calculation for CPUQuota cannot be done on the client.
 	// This is a capatability and should only be used by docker until the docker
 	// specific options are deprecated in favor of exposes CPUPeriod and
-	// CPUQuota at the task resource stanza.
+	// CPUQuota at the task resource block.
 	PercentTicks float64
 }
 

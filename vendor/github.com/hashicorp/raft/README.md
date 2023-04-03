@@ -1,4 +1,4 @@
-raft [![CircleCI](https://circleci.com/gh/hashicorp/raft.svg?style=svg)](https://circleci.com/gh/hashicorp/raft)
+raft [![Build Status](https://github.com/hashicorp/raft/workflows/ci/badge.svg)](https://github.com/hashicorp/raft/actions)
 ====
 
 raft is a [Go](http://www.golang.org) library that manages a replicated
@@ -12,7 +12,7 @@ fault tolerance as well.
 
 ## Building
 
-If you wish to build raft you'll need Go version 1.2+ installed.
+If you wish to build raft you'll need Go version 1.16+ installed.
 
 Please check your installation with:
 

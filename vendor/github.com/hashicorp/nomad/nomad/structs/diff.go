@@ -69,7 +69,7 @@ func (j *Job) Diff(other *Job, contextual bool) (*JobDiff, error) {
 	diff := &JobDiff{Type: DiffTypeNone}
 	var oldPrimitiveFlat, newPrimitiveFlat map[string]string
 	filter := []string{"ID", "Status", "StatusDescription", "Version", "Stable", "CreateIndex",
-		"ModifyIndex", "JobModifyIndex", "Update", "SubmitTime", "NomadTokenID"}
+		"ModifyIndex", "JobModifyIndex", "Update", "SubmitTime", "NomadTokenID", "VaultToken"}
 
 	if j == nil && other == nil {
 		return diff, nil
@@ -542,6 +542,12 @@ func (t *Task) Diff(other *Task, contextual bool) (*TaskDiff, error) {
 	tmplDiffs := templateDiffs(t.Templates, other.Templates, contextual)
 	if tmplDiffs != nil {
 		diff.Objects = append(diff.Objects, tmplDiffs...)
+	}
+
+	// Identity diff
+	idDiffs := idDiff(t.Identity, other.Identity, contextual)
+	if idDiffs != nil {
+		diff.Objects = append(diff.Objects, idDiffs)
 	}
 
 	return diff, nil
@@ -1531,11 +1537,11 @@ func consulProxyUpstreamDiff(prev, next ConsulUpstream, contextual bool) *Object
 
 	if reflect.DeepEqual(prev, next) {
 		return nil
-	} else if prev.Equals(new(ConsulUpstream)) {
+	} else if prev.Equal(new(ConsulUpstream)) {
 		prev = ConsulUpstream{}
 		diff.Type = DiffTypeAdded
 		newPrimFlat = flatmap.Flatten(next, nil, true)
-	} else if next.Equals(new(ConsulUpstream)) {
+	} else if next.Equal(new(ConsulUpstream)) {
 		next = ConsulUpstream{}
 		diff.Type = DiffTypeDeleted
 		oldPrimFlat = flatmap.Flatten(prev, nil, true)
@@ -2367,6 +2373,32 @@ func configDiff(old, new map[string]interface{}, contextual bool) *ObjectDiff {
 	oldPrimitiveFlat := flatmap.Flatten(old, nil, false)
 	newPrimitiveFlat := flatmap.Flatten(new, nil, false)
 	diff.Fields = fieldDiffs(oldPrimitiveFlat, newPrimitiveFlat, contextual)
+	return diff
+}
+
+// idDiff returns the diff of two identity objects. If contextual diff is
+// enabled, all fields will be returned, even if no diff occurred.
+func idDiff(oldWI, newWI *WorkloadIdentity, contextual bool) *ObjectDiff {
+	diff := &ObjectDiff{Type: DiffTypeNone, Name: "Identity"}
+	var oldPrimitiveFlat, newPrimitiveFlat map[string]string
+
+	if reflect.DeepEqual(oldWI, newWI) {
+		return nil
+	} else if oldWI == nil {
+		diff.Type = DiffTypeAdded
+		newPrimitiveFlat = flatmap.Flatten(newWI, nil, true)
+	} else if newWI == nil {
+		diff.Type = DiffTypeDeleted
+		oldPrimitiveFlat = flatmap.Flatten(oldWI, nil, true)
+	} else {
+		diff.Type = DiffTypeEdited
+		oldPrimitiveFlat = flatmap.Flatten(oldWI, nil, true)
+		newPrimitiveFlat = flatmap.Flatten(newWI, nil, true)
+	}
+
+	// Diff the primitive fields.
+	diff.Fields = fieldDiffs(oldPrimitiveFlat, newPrimitiveFlat, contextual)
+
 	return diff
 }
 

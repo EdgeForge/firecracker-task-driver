@@ -13,3 +13,11 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+# Go work files
+go.work
+go.work.sum
+
+# IDE files
+.idea
+.fleet

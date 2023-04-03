@@ -1,3 +1,6 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 // Package set provides a basic generic set implementation.
 //
 // https://en.wikipedia.org/wiki/Set_(mathematics)
@@ -23,6 +26,9 @@ func max(a, b int) int {
 //
 // A Set will automatically grow or shrink its capacity as items are added or
 // removed.
+//
+// T must *not* be of pointer type, nor contain pointer fields, which are comparable
+// but not in the way you expect. For these types, use HashSet instead.
 func New[T comparable](size int) *Set[T] {
 	return &Set[T]{
 		items: make(map[T]nothing, max(0, size)),
@@ -30,9 +36,24 @@ func New[T comparable](size int) *Set[T] {
 }
 
 // From creates a new Set containing each item in items.
+//
+// T must *not* be of pointer type, nor contain pointer fields, which are comparable
+// but not in the way you expect. For these types, use HashSet instead.
 func From[T comparable](items []T) *Set[T] {
 	s := New[T](len(items))
-	s.InsertAll(items)
+	s.InsertSlice(items)
+	return s
+}
+
+// FromFunc creates a new Set containing a conversion of each item in items.
+//
+// T must *not* be of pointer type, nor contain pointer fields, which are comparable
+// but not in the way you expect. For these types, use HashSet instead.
+func FromFunc[A any, T comparable](items []A, conversion func(A) T) *Set[T] {
+	s := New[T](len(items))
+	for _, item := range items {
+		s.Insert(conversion(item))
+	}
 	return s
 }
 
@@ -57,7 +78,16 @@ func (s *Set[T]) Insert(item T) bool {
 // InsertAll will insert each item in items into s.
 //
 // Return true if s was modified (at least one item was not already in s), false otherwise.
+//
+// Deprecated: use InsertSlice instead.
 func (s *Set[T]) InsertAll(items []T) bool {
+	return s.InsertSlice(items)
+}
+
+// InsertSlice will insert each item in items into s.
+//
+// Return true if s was modified (at least one item was not already in s), false otherwise.
+func (s *Set[T]) InsertSlice(items []T) bool {
 	modified := false
 	for _, item := range items {
 		if s.Insert(item) {
@@ -87,7 +117,6 @@ func (s *Set[T]) Remove(item T) bool {
 	if _, exists := s.items[item]; !exists {
 		return false
 	}
-
 	delete(s.items, item)
 	return true
 }
@@ -95,7 +124,16 @@ func (s *Set[T]) Remove(item T) bool {
 // RemoveAll will remove each item in items from s.
 //
 // Return true if s was modified (any item was present), false otherwise.
+//
+// Deprecated: use RemoveSlice instead.
 func (s *Set[T]) RemoveAll(items []T) bool {
+	return s.RemoveSlice(items)
+}
+
+// RemoveSlice will remove each item in items from s.
+//
+// Return true if s was modified (any item was present), false otherwise.
+func (s *Set[T]) RemoveSlice(items []T) bool {
 	modified := false
 	for _, item := range items {
 		if s.Remove(item) {
@@ -118,18 +156,31 @@ func (s *Set[T]) RemoveSet(o *Set[T]) bool {
 	return modified
 }
 
-// Contains returns whether item is present in the set.
+// RemoveFunc will remove each element from s that satisfies condition f.
+//
+// Return true if s was modified, false otherwise.
+func (s *Set[T]) RemoveFunc(f func(item T) bool) bool {
+	modified := false
+	for item := range s.items {
+		if applies := f(item); applies {
+			s.Remove(item)
+			modified = true
+		}
+	}
+	return modified
+}
+
+// Contains returns whether item is present in s.
 func (s *Set[T]) Contains(item T) bool {
 	_, exists := s.items[item]
 	return exists
 }
 
-// ContainsAll returns whether s contains every item in items.
+// ContainsAll returns whether s contains at least every item in items.
 func (s *Set[T]) ContainsAll(items []T) bool {
 	if len(s.items) < len(items) {
 		return false
 	}
-
 	for _, item := range items {
 		if !s.Contains(item) {
 			return false
@@ -138,24 +189,36 @@ func (s *Set[T]) ContainsAll(items []T) bool {
 	return true
 }
 
+// ContainsSlice returns whether s contains the same set of of elements
+// that are in items. The elements of items may contain duplicates.
+//
+// If the slice is known to be set-like (no duplicates), EqualSlice provides
+// a more efficient implementation.
+func (s *Set[T]) ContainsSlice(items []T) bool {
+	return s.Equal(From(items))
+}
+
 // Subset returns whether o is a subset of s.
 func (s *Set[T]) Subset(o *Set[T]) bool {
 	if len(s.items) < len(o.items) {
 		return false
 	}
-
 	for item := range o.items {
 		if !s.Contains(item) {
 			return false
 		}
 	}
-
 	return true
 }
 
 // Size returns the cardinality of s.
 func (s *Set[T]) Size() int {
 	return len(s.items)
+}
+
+// Empty returns true if s contains no elements, false otherwise.
+func (s *Set[T]) Empty() bool {
+	return s.Size() == 0
 }
 
 // Union returns a set that contains all elements of s and o combined.
@@ -184,12 +247,10 @@ func (s *Set[T]) Difference(o *Set[T]) *Set[T] {
 // Intersect returns a set that contains elements that are present in both s and o.
 func (s *Set[T]) Intersect(o *Set[T]) *Set[T] {
 	result := New[T](0)
-
 	big, small := s, o
 	if s.Size() < o.Size() {
 		big, small = o, s
 	}
-
 	for item := range small.items {
 		if big.Contains(item) {
 			result.Insert(item)
@@ -207,8 +268,8 @@ func (s *Set[T]) Copy() *Set[T] {
 	return result
 }
 
-// List creates a copy of s as a slice.
-func (s *Set[T]) List() []T {
+// Slice creates a copy of s as a slice. Elements are in no particular order.
+func (s *Set[T]) Slice() []T {
 	result := make([]T, 0, s.Size())
 	for item := range s.items {
 		result = append(result, item)
@@ -216,15 +277,31 @@ func (s *Set[T]) List() []T {
 	return result
 }
 
-// String creates a string representation of s, using f to transform each element
-// into a string. The result contains elements sorted by their string order.
-func (s *Set[T]) String(f func(element T) string) string {
+// List creates a copy of s as a slice.
+//
+// Deprecated: use Slice() instead.
+func (s *Set[T]) List() []T {
+	return s.Slice()
+}
+
+// String creates a string representation of s, using "%v" printf formating to transform
+// each element into a string. The result contains elements sorted by their lexical
+// string order.
+func (s *Set[T]) String() string {
+	return s.StringFunc(func(element T) string {
+		return fmt.Sprintf("%v", element)
+	})
+}
+
+// StringFunc creates a string representation of s, using f to transform each element
+// into a string. The result contains elements sorted by their lexical string order.
+func (s *Set[T]) StringFunc(f func(element T) string) string {
 	l := make([]string, 0, s.Size())
 	for item := range s.items {
 		l = append(l, f(item))
 	}
 	sort.Strings(l)
-	return fmt.Sprintf("%v", l)
+	return fmt.Sprintf("%s", l)
 }
 
 // Equal returns whether s and o contain the same elements.
@@ -240,4 +317,16 @@ func (s *Set[T]) Equal(o *Set[T]) bool {
 	}
 
 	return true
+}
+
+// EqualSlice returns whether s and items contain the same elements.
+//
+// If items contains duplicates EqualSlice will return false; it is
+// assumed that items is itself set-like. For comparing equality with
+// a slice that may contain duplicates, use ContainsSlice.
+func (s *Set[T]) EqualSlice(items []T) bool {
+	if len(s.items) != len(items) {
+		return false
+	}
+	return s.ContainsAll(items)
 }

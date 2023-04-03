@@ -8,6 +8,8 @@ import (
 
 	multierror "github.com/hashicorp/go-multierror"
 	"github.com/hashicorp/nomad/helper"
+	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slices"
 )
 
 // CSISocketName is the filename that Nomad expects plugins to create inside the
@@ -18,11 +20,11 @@ const CSISocketName = "csi.sock"
 // where Nomad will expect plugins to create intermediary mounts for volumes.
 const CSIIntermediaryDirname = "volumes"
 
-// VolumeTypeCSI is the type in the volume stanza of a TaskGroup
+// VolumeTypeCSI is the type in the volume block of a TaskGroup
 const VolumeTypeCSI = "csi"
 
 // CSIPluginType is an enum string that encapsulates the valid options for a
-// CSIPlugin stanza's Type. These modes will allow the plugin to be used in
+// CSIPlugin block's Type. These modes will allow the plugin to be used in
 // different ways by the client.
 type CSIPluginType string
 
@@ -76,6 +78,25 @@ type TaskCSIPluginConfig struct {
 	// HealthTimeout is the time after which the CSI plugin tasks will be killed
 	// if the CSI Plugin is not healthy.
 	HealthTimeout time.Duration `mapstructure:"health_timeout" hcl:"health_timeout,optional"`
+}
+
+func (t *TaskCSIPluginConfig) Equal(o *TaskCSIPluginConfig) bool {
+	if t == nil || o == nil {
+		return t == o
+	}
+	switch {
+	case t.ID != o.ID:
+		return false
+	case t.Type != o.Type:
+		return false
+	case t.MountDir != o.MountDir:
+		return false
+	case t.StagePublishBaseDir != o.StagePublishBaseDir:
+		return false
+	case t.HealthTimeout != o.HealthTimeout:
+		return false
+	}
+	return true
 }
 
 func (t *TaskCSIPluginConfig) Copy() *TaskCSIPluginConfig {
@@ -174,7 +195,7 @@ func (o *CSIMountOptions) Copy() *CSIMountOptions {
 	}
 
 	no := *o
-	no.MountFlags = helper.CopySliceString(o.MountFlags)
+	no.MountFlags = slices.Clone(o.MountFlags)
 	return &no
 }
 
@@ -197,13 +218,10 @@ func (o *CSIMountOptions) Equal(p *CSIMountOptions) bool {
 	if o == nil || p == nil {
 		return false
 	}
-
 	if o.FSType != p.FSType {
 		return false
 	}
-
-	return helper.CompareSliceSetString(
-		o.MountFlags, p.MountFlags)
+	return helper.SliceSetEq(o.MountFlags, p.MountFlags)
 }
 
 // CSIMountOptions implements the Stringer and GoStringer interfaces to prevent
@@ -367,12 +385,15 @@ type CSIVolListStub struct {
 	Schedulable         bool
 	PluginID            string
 	Provider            string
+	ControllerRequired  bool
 	ControllersHealthy  int
 	ControllersExpected int
 	NodesHealthy        int
 	NodesExpected       int
-	CreateIndex         uint64
-	ModifyIndex         uint64
+	ResourceExhausted   time.Time
+
+	CreateIndex uint64
+	ModifyIndex uint64
 }
 
 // NewCSIVolume creates the volume struct. No side-effects
@@ -409,7 +430,7 @@ func (v *CSIVolume) RemoteID() string {
 }
 
 func (v *CSIVolume) Stub() *CSIVolListStub {
-	stub := CSIVolListStub{
+	return &CSIVolListStub{
 		ID:                  v.ID,
 		Namespace:           v.Namespace,
 		Name:                v.Name,
@@ -422,15 +443,15 @@ func (v *CSIVolume) Stub() *CSIVolListStub {
 		Schedulable:         v.Schedulable,
 		PluginID:            v.PluginID,
 		Provider:            v.Provider,
+		ControllerRequired:  v.ControllerRequired,
 		ControllersHealthy:  v.ControllersHealthy,
 		ControllersExpected: v.ControllersExpected,
 		NodesHealthy:        v.NodesHealthy,
 		NodesExpected:       v.NodesExpected,
+		ResourceExhausted:   v.ResourceExhausted,
 		CreateIndex:         v.CreateIndex,
 		ModifyIndex:         v.ModifyIndex,
 	}
-
-	return &stub
 }
 
 // ReadSchedulable determines if the volume is potentially schedulable
@@ -845,7 +866,7 @@ func (v *CSIVolume) Merge(other *CSIVolume) error {
 
 	// must be compatible with parameters set by from CreateVolumeResponse
 
-	if len(other.Parameters) != 0 && !helper.CompareMapStringString(v.Parameters, other.Parameters) {
+	if len(other.Parameters) != 0 && !maps.Equal(v.Parameters, other.Parameters) {
 		errs = multierror.Append(errs, errors.New(
 			"volume parameters cannot be updated"))
 	}
