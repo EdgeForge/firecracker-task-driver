@@ -1,12 +1,21 @@
 package main
 
 import (
-	"github.com/cneira/firecracker-task-driver/driver"
+	"flag"
+	"fmt"
+
+	firevm "github.com/edgeforge/firecracker-task-driver/driver"
 	log "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/nomad/plugins"
 )
 
 func main() {
+	version := flag.Bool("version", false, "show driver version")
+	flag.Parse()
+	if *version {
+		fmt.Println(firevm.PluginVersion)
+		return
+	}
 	// Serve the plugin
 	plugins.Serve(factory)
 }

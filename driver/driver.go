@@ -47,11 +47,13 @@ const (
 )
 
 var (
+	PluginVersion = "0.1.1-011"
+
 	// pluginInfo is the response returned for the PluginInfo RPC
 	pluginInfo = &base.PluginInfoResponse{
 		Type:              base.PluginTypeDriver,
 		PluginApiVersions: []string{drivers.ApiVersion010},
-		PluginVersion:     "0.1.1-dev",
+		PluginVersion:     PluginVersion,
 		Name:              pluginName,
 	}
 
@@ -150,6 +152,8 @@ type TaskState struct {
 func NewFirecrackerDriver(logger hclog.Logger) drivers.DriverPlugin {
 	ctx, cancel := context.WithCancel(context.Background())
 	logger = logger.Named(pluginName)
+	// TODO: make debugging optional once this is working
+	EnableDebugging()
 	return &Driver{
 		eventer:        eventer.NewEventer(ctx, logger),
 		config:         &Config{},
@@ -209,8 +213,10 @@ func (d *Driver) handleFingerprint(ctx context.Context, ch chan<- *drivers.Finge
 	for {
 		select {
 		case <-ctx.Done():
+			d.logger.Info("fingerprint context cancelled")
 			return
 		case <-d.ctx.Done():
+			d.logger.Info("driver context cancelled")
 			return
 		case <-ticker.C:
 			ticker.Reset(fingerprintPeriod)
@@ -225,7 +231,7 @@ func (d *Driver) buildFingerprint() *drivers.Fingerprint {
 	attrs := map[string]*pstructs.Attribute{"driver.firecracker-task": pstructs.NewStringAttribute("1")}
 	health = drivers.HealthStateHealthy
 	desc = "ready"
-	d.logger.Info("buildFingerprint()", "driver.FingerPrint", hclog.Fmt("%+v", health))
+	d.logger.Debug("buildFingerprint()", "driver.FingerPrint", hclog.Fmt("%+v", health))
 	return &drivers.Fingerprint{
 		Attributes:        attrs,
 		Health:            health,
@@ -293,9 +299,10 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 
 	m, err := d.initializeContainer(context.Background(), cfg, driverConfig)
 	if err != nil {
-		d.logger.Info("Error starting firecracker vm", "driver_cfg", hclog.Fmt("%+v", err))
+		d.logger.Error("Error starting firecracker vm", "Err", err)
 		return nil, nil, fmt.Errorf("task with ID %q failed: %v", cfg.ID, err)
 	}
+	d.logger.Info("Firecracker vm has initialized container")
 
 	h := &taskHandle{
 		taskConfig:      cfg,
@@ -307,6 +314,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		cpuStatsSys:     stats.NewCpuStats(),
 		cpuStatsUser:    stats.NewCpuStats(),
 		cpuStatsTotal:   stats.NewCpuStats(),
+		vminfo:          m,
 	}
 
 	driverState := TaskState{
@@ -315,19 +323,23 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 		StartedAt:     h.startedAt,
 	}
 
+	d.logger.Info("setting driver state")
 	if err := handle.SetDriverState(&driverState); err != nil {
 		d.logger.Error("failed to start task, error setting driver state", "error", err)
 		return nil, nil, fmt.Errorf("failed to set driver state: %v", err)
 	}
 
+	d.logger.Info("setting task")
 	d.tasks.Set(cfg.ID, h)
 
+	d.logger.Info("run task")
 	go h.run()
 
 	return handle, nil, nil
 }
 
 func (d *Driver) WaitTask(ctx context.Context, taskID string) (<-chan *drivers.ExitResult, error) {
+	d.logger.Info("WaitTask started", "taskID", taskID)
 	handle, ok := d.tasks.Get(taskID)
 	if !ok {
 		return nil, drivers.ErrTaskNotFound
@@ -346,12 +358,23 @@ func (d *Driver) handleWait(ctx context.Context, handle *taskHandle, ch chan *dr
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	if handle.vminfo.ctx == nil {
+		d.logger.Error("handle context is nil")
+		return
+	}
+
+	taskID := handle.taskConfig.ID
 	for {
 		select {
 		case <-ctx.Done():
+			d.logger.Info("handleWait context is done", "taskID", taskID)
 			return
 		case <-d.ctx.Done():
+			d.logger.Info("handleWait driver context is done", "taskID", taskID)
 			return
+		// case <-handle.vminfo.ctx.Done():
+		// 	d.logger.Info("handleWait task context is done", "taskID", taskID)
+		// 	return
 		case <-ticker.C:
 			s := handle.TaskStatus()
 			if s.State == drivers.TaskStateExited {
@@ -367,7 +390,9 @@ func (d *Driver) StopTask(taskID string, timeout time.Duration, signal string) e
 		return drivers.ErrTaskNotFound
 	}
 
+	d.logger.Info("stopping task", "ID", taskID)
 	if err := handle.shutdown(timeout); err != nil {
+		d.logger.Error("stopping task failed", "Err", err)
 		return fmt.Errorf("executor Shutdown failed: %v", err)
 	}
 
@@ -411,7 +436,7 @@ func (d *Driver) TaskStats(ctx context.Context, taskID string, interval time.Dur
 	if !ok {
 		return nil, drivers.ErrTaskNotFound
 	}
-
+	handle.logger.Info("starting stats for new task", "taskID", taskID)
 	statsChannel := make(chan *drivers.TaskResourceUsage)
 	go handle.stats(ctx, statsChannel, interval)
 

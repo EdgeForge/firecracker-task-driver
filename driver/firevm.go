@@ -98,8 +98,12 @@ func taskConfig2FirecrackerOpts(taskConfig TaskConfig, cfg *drivers.TaskConfig) 
 type vminfo struct {
 	Machine *firecracker.Machine
 	tty     string
+	Console console.Console
 	Info    Instance_info
+	Cancel  context.CancelFunc
+	ctx     context.Context // context of initialized VM
 }
+
 type Instance_info struct {
 	AllocId string
 	Ip      string
@@ -124,8 +128,14 @@ func (d *Driver) initializeContainer(ctx context.Context, cfg *drivers.TaskConfi
 		logger.SetLevel(log.DebugLevel)
 	}
 
+	var ok bool
 	vmmCtx, vmmCancel := context.WithCancel(ctx)
-	defer vmmCancel()
+	defer func() {
+		if !ok {
+			d.logger.Info("cancelling firecracker instance")
+			vmmCancel()
+		}
+	}()
 
 	machineOpts := []firecracker.Opt{
 		firecracker.WithLogger(log.NewEntry(logger)),
@@ -140,6 +150,7 @@ func (d *Driver) initializeContainer(ctx context.Context, cfg *drivers.TaskConfi
 	} else {
 		firecrackerBinary = "/usr/bin/firecracker"
 	}
+	d.logger.Info("found firecracker executable", "filename", firecrackerBinary)
 
 	finfo, err := os.Stat(firecrackerBinary)
 	if os.IsNotExist(err) {
@@ -156,39 +167,46 @@ func (d *Driver) initializeContainer(ctx context.Context, cfg *drivers.TaskConfi
 		return nil, fmt.Errorf("Binary, %q, is not executable. Check permissions of binary", firecrackerBinary)
 	}
 
+	d.logger.Info("create firecracker console")
 	tty, ftty, err := console.NewPty()
 
 	if err != nil {
 		return nil, fmt.Errorf("Could not create serial console  %v+", err)
 	}
+	d.logger.Info("create console console created", "slave", ftty)
 
 	cmd := firecracker.VMCommandBuilder{}.
 		WithBin(firecrackerBinary).
 		WithSocketPath(fcCfg.SocketPath).
 		WithStdin(tty).
 		WithStdout(tty).
-		WithStderr(nil).
+		WithStderr(tty).
 		Build(ctx)
 
 	machineOpts = append(machineOpts, firecracker.WithProcessRunner(cmd))
 
+	d.logger.Info("create firecracker machine")
 	m, err := firecracker.NewMachine(vmmCtx, fcCfg, machineOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("Failed creating machine: %v", err)
 	}
 
+	d.logger.Info("start firecracker machine")
 	if err := m.Start(vmmCtx); err != nil {
 		return nil, fmt.Errorf("Failed to start machine: %v", err)
 	}
 
 	if opts.validMetadata != nil {
-		m.SetMetadata(vmmCtx, opts.validMetadata)
+		err = m.SetMetadata(vmmCtx, opts.validMetadata)
+		d.logger.Error("failed to set metadata on machine", "Err", err)
 	}
 
+	d.logger.Info("get firecracker machine pid")
 	pid, errpid := m.PID()
 	if errpid != nil {
 		return nil, fmt.Errorf("Failed getting pid for machine: %v", errpid)
 	}
+	d.logger.Info("firecracker machine started", "PID", pid)
 	var ip string
 	var vnic string
 	if len(opts.FcNetworkName) > 0 {
@@ -215,5 +233,6 @@ func (d *Driver) initializeContainer(ctx context.Context, cfg *drivers.TaskConfi
 	defer log.Close()
 	fmt.Fprintf(log, "%s", f)
 
-	return &vminfo{Machine: m, tty: ftty, Info: info}, nil
+	ok = true
+	return &vminfo{Machine: m, tty: ftty, Info: info, Console: tty, Cancel: vmmCancel, ctx: vmmCtx}, nil
 }

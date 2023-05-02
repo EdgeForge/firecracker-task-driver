@@ -337,6 +337,7 @@ func (cniConf CNIConfiguration) invokeCNI(ctx context.Context, logger *log.Entry
 	runtimeConf := cniConf.asCNIRuntimeConf()
 
 	delNetworkFunc := func() error {
+		ctx = context.Background() // avoid having expired ctx when run at cleanup
 		err := cniPlugin.DelNetworkList(ctx, networkConf, runtimeConf)
 		if err != nil {
 			return fmt.Errorf("failed to delete CNI network list %q: %w", cniConf.NetworkName, err)

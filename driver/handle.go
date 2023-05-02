@@ -47,10 +47,10 @@ type taskHandle struct {
 	startedAt       time.Time
 	completedAt     time.Time
 	exitResult      *drivers.ExitResult
-
-	cpuStatsSys   *stats.CpuStats
-	cpuStatsUser  *stats.CpuStats
-	cpuStatsTotal *stats.CpuStats
+	vminfo          *vminfo
+	cpuStatsSys     *stats.CpuStats
+	cpuStatsUser    *stats.CpuStats
+	cpuStatsTotal   *stats.CpuStats
 }
 
 func (h *taskHandle) TaskStatus() *drivers.TaskStatus {
@@ -114,6 +114,7 @@ func (h *taskHandle) run() {
 			break
 		}
 	}
+	h.logger.Info("firecracker instance is no longer running")
 	h.stateLock.Lock()
 	defer h.stateLock.Unlock()
 
@@ -126,29 +127,35 @@ func (h *taskHandle) run() {
 func (h *taskHandle) stats(ctx context.Context, statsChannel chan *drivers.TaskResourceUsage, interval time.Duration) {
 	defer close(statsChannel)
 	timer := time.NewTimer(0)
+
+	pid, err := strconv.Atoi(h.Info.Pid)
+	if err != nil {
+		h.logger.Error("unable to convert pid ", h.Info.Pid, " to int from ", h.taskConfig.ID)
+		return
+	}
+
 	h.logger.Debug("Starting stats collection for ", h.taskConfig.ID)
 	for {
 		select {
 		case <-ctx.Done():
-			h.logger.Debug("Stopping stats collection for ", h.taskConfig.ID)
+			h.logger.Info("Stopping stats collection for ", h.taskConfig.ID)
+			return
+		case <-h.vminfo.ctx.Done():
+			h.logger.Info("vm context done -- stopping stats collection vm ", h.taskConfig.ID)
 			return
 		case <-timer.C:
 			timer.Reset(interval)
 		}
 
+		// TODO: minimize lock window
 		h.stateLock.Lock()
 		t := time.Now()
 
-		pid, err := strconv.Atoi(h.Info.Pid)
-		if err != nil {
-			h.logger.Error("unable to convert pid ", h.Info.Pid, " to int from ", h.taskConfig.ID)
-			continue
-		}
-
 		p, err := process.NewProcess(int32(pid))
 		if err != nil {
+			h.stateLock.Unlock()
 			h.logger.Error("unable create new process ", h.Info.Pid, " from ", h.taskConfig.ID)
-			continue
+			break
 		}
 		ms := &drivers.MemoryStats{}
 		if memInfo, err := p.MemoryInfo(); err == nil {
@@ -203,23 +210,29 @@ func (h *taskHandle) Signal(sig string) error {
 	}
 
 	switch sig {
-
 	case "SIGTERM":
-		p.Signal(syscall.SIGTERM)
+		return p.Signal(syscall.SIGTERM)
 	case "SIGHUP":
-		p.Signal(syscall.SIGHUP)
+		return p.Signal(syscall.SIGHUP)
 	case "SIGABRT":
-		p.Signal(syscall.SIGABRT)
-	default:
-		return fmt.Errorf("Firecracker-task-driver SIGNAL NOT SUPPORTED")
+		return p.Signal(syscall.SIGABRT)
 	}
-	return nil
+
+	return fmt.Errorf("Firecracker-task-driver SIGNAL NOT SUPPORTED")
 }
 
 // shutdown shuts down the container, with `timeout` grace period
 // before shutdown vm
 func (h *taskHandle) shutdown(timeout time.Duration) error {
+	err := h.vminfo.Console.Close()
+	h.logger.Info("console is now closed", "Err", err)
+	if h.vminfo.Cancel != nil {
+		h.vminfo.Cancel()
+	}
 	time.Sleep(timeout)
-	h.MachineInstance.StopVMM()
+	err = h.MachineInstance.StopVMM()
+	if err != nil {
+		h.logger.Error("failed to shut down VM", "Err", err)
+	}
 	return nil
 }
