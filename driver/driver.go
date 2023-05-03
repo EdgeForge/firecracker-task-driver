@@ -47,7 +47,7 @@ const (
 )
 
 var (
-	PluginVersion = "0.1.1-014"
+	PluginVersion = "0.1.1-015"
 
 	// pluginInfo is the response returned for the PluginInfo RPC
 	pluginInfo = &base.PluginInfoResponse{
@@ -358,11 +358,6 @@ func (d *Driver) handleWait(ctx context.Context, handle *taskHandle, ch chan *dr
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	if handle.vminfo.ctx == nil {
-		d.logger.Error("handle context is nil")
-		return
-	}
-
 	taskID := handle.taskConfig.ID
 	for {
 		select {
@@ -372,9 +367,6 @@ func (d *Driver) handleWait(ctx context.Context, handle *taskHandle, ch chan *dr
 		case <-d.ctx.Done():
 			d.logger.Info("handleWait driver context is done", "taskID", taskID)
 			return
-		// case <-handle.vminfo.ctx.Done():
-		// 	d.logger.Info("handleWait task context is done", "taskID", taskID)
-		// 	return
 		case <-ticker.C:
 			s := handle.TaskStatus()
 			if s.State == drivers.TaskStateExited {

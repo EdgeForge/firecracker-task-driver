@@ -140,9 +140,6 @@ func (h *taskHandle) stats(ctx context.Context, statsChannel chan *drivers.TaskR
 		case <-ctx.Done():
 			h.logger.Info("Stopping stats collection for ", h.taskConfig.ID)
 			return
-		case <-h.vminfo.ctx.Done():
-			h.logger.Info("vm context done -- stopping stats collection vm ", h.taskConfig.ID)
-			return
 		case <-timer.C:
 			timer.Reset(interval)
 		}

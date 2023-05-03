@@ -102,7 +102,6 @@ type vminfo struct {
 	Console console.Console
 	Info    Instance_info
 	Cancel  context.CancelFunc
-	ctx     context.Context // context of initialized VM
 }
 
 type Instance_info struct {
@@ -235,7 +234,7 @@ func (d *Driver) initializeContainer(ctx context.Context, cfg *drivers.TaskConfi
 	fmt.Fprintf(log, "%s", f)
 
 	ok = true
-	return &vminfo{Machine: m, tty: ftty, Info: info, Console: tty, Cancel: vmmCancel, ctx: vmmCtx}, nil
+	return &vminfo{Machine: m, tty: ftty, Info: info, Console: tty, Cancel: vmmCancel}, nil
 }
 
 // tickle tries to open and write to the given pty
