@@ -47,7 +47,7 @@ const (
 )
 
 var (
-	PluginVersion = "0.1.1-013"
+	PluginVersion = "0.1.1-014"
 
 	// pluginInfo is the response returned for the PluginInfo RPC
 	pluginInfo = &base.PluginInfoResponse{

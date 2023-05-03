@@ -24,8 +24,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"reflect"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,9 +64,6 @@ type SeccompConfig struct {
 // ErrAlreadyStarted signifies that the Machine has already started and cannot
 // be started again.
 var ErrAlreadyStarted = errors.New("firecracker: machine already started")
-
-// ErrGraceShutdown signifies that the Machine will shutdown gracefully and SendCtrlAltDelete is unable to send
-//var ErrGraceShutdown = errors.New("Shutdown gracefully: SendCtrlAltDelete is not supported if the arch is ARM64")
 
 type MMDSVersion string
 
@@ -275,8 +270,6 @@ type Machine struct {
 	// callbacks that should be run when the machine is being torn down
 	cleanupOnce  sync.Once
 	cleanupFuncs []func() error
-	// cleanupCh is a channel that gets closed to notify cleanup cleanupFuncs has been called totally
-	cleanupCh chan struct{}
 }
 
 // Logger returns a logrus logger appropriate for logging hypervisor messages
@@ -297,18 +290,12 @@ func (m *Machine) PID() (int, error) {
 	return m.cmd.Process.Pid, nil
 }
 
-func GetFunctionName(i interface{}) string {
-	return runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
-}
-
 func (m *Machine) doCleanup() error {
 	var err *multierror.Error
 	m.cleanupOnce.Do(func() {
 		// run them in reverse order so changes are "unwound" (similar to defer statements)
 		for i := range m.cleanupFuncs {
-			m.logger.Printf("CLEAN UP [%d/%d]:", i, len(m.cleanupFuncs))
 			cleanupFunc := m.cleanupFuncs[len(m.cleanupFuncs)-1-i]
-			m.logger.Println("CLEAN UP FUNC:", GetFunctionName(cleanupFunc))
 			err = multierror.Append(err, cleanupFunc())
 		}
 	})
@@ -367,8 +354,7 @@ func configureBuilder(builder VMCommandBuilder, cfg Config) VMCommandBuilder {
 // provided Config.
 func NewMachine(ctx context.Context, cfg Config, opts ...Opt) (*Machine, error) {
 	m := &Machine{
-		exitCh:    make(chan struct{}),
-		cleanupCh: make(chan struct{}),
+		exitCh: make(chan struct{}),
 	}
 
 	if cfg.VMID == "" {
@@ -410,7 +396,6 @@ func NewMachine(ctx context.Context, cfg Config, opts ...Opt) (*Machine, error) 
 			syscall.SIGABRT,
 		}
 	}
-	m.logger.Info("LOGGER", "LOGPATH", cfg.LogPath)
 
 	m.machineConfig = cfg.MachineCfg
 	m.Cfg = cfg
@@ -468,11 +453,7 @@ func (m *Machine) Start(ctx context.Context) error {
 // Shutdown requests a clean shutdown of the VM by sending CtrlAltDelete on the virtual keyboard
 func (m *Machine) Shutdown(ctx context.Context) error {
 	m.logger.Debug("Called machine.Shutdown()")
-	if runtime.GOARCH != "arm64" {
-		return m.sendCtrlAltDel(ctx)
-	} else {
-		return m.StopVMM()
-	}
+	return m.sendCtrlAltDel(ctx)
 }
 
 // Wait will wait until the firecracker process has finished.  Wait is safe to
@@ -595,19 +576,11 @@ func (m *Machine) startVMM(ctx context.Context) error {
 
 	errCh := make(chan error)
 	go func() {
-		m.logger.Printf("firecracker WAITING TO EXIT")
-		// waitErr := m.cmd.Wait()
-		_, waitErr := m.cmd.Process.Wait()
-		m.logger.Printf("firecracker READY TO EXIT")
+		waitErr := m.cmd.Wait()
 		if waitErr != nil {
 			m.logger.Warnf("firecracker exited: %s", waitErr.Error())
 		} else {
 			m.logger.Printf("firecracker exited: status=0")
-		}
-		if c, ok := m.cmd.Stdin.(io.Closer); ok {
-			m.logger.Printf("Closing cmd stdin: %+v", m.cmd.Stdin)
-			err := c.Close()
-			m.logger.Printf("Closing cmd stdin err: %v", err)
 		}
 
 		cleanupErr := m.doCleanup()
@@ -621,8 +594,6 @@ func (m *Machine) startVMM(ctx context.Context) error {
 		// When err is nil, two reads are performed (waitForSocket and close exitCh goroutine),
 		// second one never ends as it tries to read from empty channel.
 		close(errCh)
-		close(m.cleanupCh)
-
 	}()
 
 	m.setupSignals()
@@ -637,20 +608,11 @@ func (m *Machine) startVMM(ctx context.Context) error {
 		return err
 	}
 
-	// This goroutine is used to kill the process by context cancellation,
+	// This goroutine is used to kill the process by context cancelletion,
 	// but doesn't tell anyone about that.
 	go func() {
-		select {
-		case <-ctx.Done():
-			m.logger.Printf("startVMM secondary: ctx is done")
-			break
-		case <-m.exitCh:
-			m.logger.Printf("startVMM secondary: exitch called")
-			// VMM exited on its own; no need to stop it.
-			return
-		}
+		<-ctx.Done()
 		err := m.stopVMM()
-		m.logger.Errorf("startVMM -> stopVMM error: %v", err)
 		if err != nil {
 			m.logger.WithError(err).Errorf("failed to stop vm %q", m.Cfg.VMID)
 		}
@@ -668,38 +630,21 @@ func (m *Machine) startVMM(ctx context.Context) error {
 	return nil
 }
 
-// StopVMM stops the current VMM.
+//StopVMM stops the current VMM.
 func (m *Machine) StopVMM() error {
 	return m.stopVMM()
 }
 
 func (m *Machine) stopVMM() error {
-	m.logger.Error("stopVMM(): invoked")
 	if m.cmd != nil && m.cmd.Process != nil {
-		errx := m.cmd.Cancel()
-		m.logger.Error("stopVMM(): cmd cancel invocation error:", errx)
-		// defer func() {
-		// 	m.cmd.Stdout = nil
-		// 	m.cmd.Stdin = nil
-		// 	m.cmd.Stderr = nil
-		// }()
-		m.logger.Error("stopVMM(): sending sigterm to firecracker")
-		if in, ok := m.cmd.Stdin.(io.Closer); ok {
-			err := in.Close()
-			m.logger.Error("stopVMM(): close stdin", "ERR", err)
-		} else {
-			m.logger.Errorf("stopVMM(): stdin cannot be closed, as it is a %T", m.cmd.Stdin)
-		}
+		m.logger.Debug("stopVMM(): sending sigterm to firecracker")
 		err := m.cmd.Process.Signal(syscall.SIGTERM)
 		if err != nil && !strings.Contains(err.Error(), "os: process already finished") {
-			m.logger.Errorf("stopVMM(): process signal error: %+v", err)
-			// return err
+			return err
 		}
-		// Wait for the cleanup to finish.
-		<-m.cleanupCh
-		return err
+		return nil
 	}
-	m.logger.Error("stopVMM(): no firecracker process running, not sending a signal")
+	m.logger.Debug("stopVMM(): no firecracker process running, not sending a signal")
 
 	// don't return an error if the process isn't even running
 	return nil
@@ -715,7 +660,6 @@ func createFifo(path string) error {
 }
 
 func (m *Machine) setupLogging(ctx context.Context) error {
-	log.Println("SET UP LOGGING FOR:", m.Cfg.LogPath)
 	path := m.Cfg.LogPath
 	if len(m.Cfg.LogFifo) > 0 {
 		path = m.Cfg.LogFifo
@@ -1076,7 +1020,8 @@ func (m *Machine) DescribeInstanceInfo(ctx context.Context) (models.InstanceInfo
 	if err != nil {
 		m.logger.Errorf("Getting Instance info failed parsing payload: %s", err)
 	}
-	// m.logger.Printf("GetInstanceInfo successful")
+
+	m.logger.Printf("GetInstanceInfo successful")
 	return instanceInfo, err
 }
 

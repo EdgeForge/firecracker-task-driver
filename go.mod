@@ -2,8 +2,6 @@ module github.com/edgeforge/firecracker-task-driver
 
 go 1.18
 
-replace github.com/tencentcloud/tencentcloud-sdk-go v3.0.83+incompatible => github.com/tencentcloud/tencentcloud-sdk-go v1.0.509
-
 require (
 	github.com/containerd/console v1.0.3
 	github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
@@ -143,7 +141,3 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	oss.indeed.com/go/libtime v1.6.0 // indirect
 )
-
-replace github.com/cneira/firecracker-task-driver => ./
-
-replace github.com/firecracker-microvm/firecracker-go-sdk => ../../firecracker-microvm/firecracker-go-sdk

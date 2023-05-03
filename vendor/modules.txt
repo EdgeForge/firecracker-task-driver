@@ -52,7 +52,7 @@ github.com/davecgh/go-spew/spew
 # github.com/fatih/color v1.15.0
 ## explicit; go 1.17
 github.com/fatih/color
-# github.com/firecracker-microvm/firecracker-go-sdk v1.0.0 => ../../firecracker-microvm/firecracker-go-sdk
+# github.com/firecracker-microvm/firecracker-go-sdk v1.0.0
 ## explicit; go 1.11
 github.com/firecracker-microvm/firecracker-go-sdk
 github.com/firecracker-microvm/firecracker-go-sdk/client
@@ -656,6 +656,3 @@ gopkg.in/yaml.v3
 # oss.indeed.com/go/libtime v1.6.0
 ## explicit; go 1.12
 oss.indeed.com/go/libtime
-# github.com/tencentcloud/tencentcloud-sdk-go v3.0.83+incompatible => github.com/tencentcloud/tencentcloud-sdk-go v1.0.509
-# github.com/cneira/firecracker-task-driver => ./
-# github.com/firecracker-microvm/firecracker-go-sdk => ../../firecracker-microvm/firecracker-go-sdk

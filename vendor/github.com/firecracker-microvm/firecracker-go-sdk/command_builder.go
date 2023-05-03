@@ -18,7 +18,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"time"
 )
 
 const defaultFcBin = "firecracker"
@@ -38,7 +37,6 @@ type VMCommandBuilder struct {
 	stdin      io.Reader
 	stdout     io.Writer
 	stderr     io.Writer
-	timeout    time.Duration
 }
 
 // Args returns all args that will be passed to exec.Command
@@ -133,14 +131,6 @@ func (b VMCommandBuilder) WithStdin(stdin io.Reader) VMCommandBuilder {
 	return b
 }
 
-// WithWaitDelay specifies the duration that the command should
-// wait on stdio before closing the process
-// os.Stdin in the firecracker exec.Command.
-func (b VMCommandBuilder) WithWaitDelay(timeout time.Duration) VMCommandBuilder {
-	b.timeout = timeout
-	return b
-}
-
 // Build will build a firecracker command using the specific arguments
 // specified in the builder.
 func (b VMCommandBuilder) Build(ctx context.Context) *exec.Cmd {
@@ -167,7 +157,6 @@ func (b VMCommandBuilder) Build(ctx context.Context) *exec.Cmd {
 	if stdin := b.Stdin(); stdin != nil {
 		cmd.Stdin = stdin
 	}
-	cmd.WaitDelay = b.timeout
 
 	return cmd
 }
