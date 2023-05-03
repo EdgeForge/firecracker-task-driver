@@ -154,7 +154,7 @@ func (h *taskHandle) stats(ctx context.Context, statsChannel chan *drivers.TaskR
 		p, err := process.NewProcess(int32(pid))
 		if err != nil {
 			h.stateLock.Unlock()
-			h.logger.Error("unable create new process ", h.Info.Pid, " from ", h.taskConfig.ID)
+			h.logger.Error("unable create new process", "PID", h.Info.Pid, "TaskID", h.taskConfig.ID)
 			break
 		}
 		ms := &drivers.MemoryStats{}
@@ -224,11 +224,15 @@ func (h *taskHandle) Signal(sig string) error {
 // shutdown shuts down the container, with `timeout` grace period
 // before shutdown vm
 func (h *taskHandle) shutdown(timeout time.Duration) error {
-	err := h.vminfo.Console.Close()
+	err := h.vminfo.Console.Reset()
+	h.logger.Info("console is now reset", "Err", err)
+	err = h.vminfo.Console.Close()
 	h.logger.Info("console is now closed", "Err", err)
 	if h.vminfo.Cancel != nil {
 		h.vminfo.Cancel()
 	}
+	h.logger.Info("tickle tty to trigger close", "tty", h.vminfo.tty)
+	tickle(h.vminfo.tty)
 	time.Sleep(timeout)
 	err = h.MachineInstance.StopVMM()
 	if err != nil {

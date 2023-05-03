@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/containerd/console"
@@ -173,7 +174,7 @@ func (d *Driver) initializeContainer(ctx context.Context, cfg *drivers.TaskConfi
 	if err != nil {
 		return nil, fmt.Errorf("Could not create serial console  %v+", err)
 	}
-	d.logger.Info("create console console created", "slave", ftty)
+	d.logger.Info("create console console created", "slave", ftty, "fd", tty.Fd(), "name", tty.Name())
 
 	cmd := firecracker.VMCommandBuilder{}.
 		WithBin(firecrackerBinary).
@@ -235,4 +236,21 @@ func (d *Driver) initializeContainer(ctx context.Context, cfg *drivers.TaskConfi
 
 	ok = true
 	return &vminfo{Machine: m, tty: ftty, Info: info, Console: tty, Cancel: vmmCancel, ctx: vmmCtx}, nil
+}
+
+// tickle tries to open and write to the given pty
+// the point of it being to force it to break the
+// read function that is blocked on it in the driver
+func tickle(pty string) {
+	w, err := os.OpenFile(pty, os.O_RDWR|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		log.Printf("failed to open pty %q -- %v", pty, err)
+		return
+	}
+	_, err = w.WriteString("exit")
+	if err != nil {
+		log.Printf("failed to write to pty %q -- %v", pty, err)
+		return
+	}
+	w.Close()
 }
